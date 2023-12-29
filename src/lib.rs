@@ -2,31 +2,61 @@
 
 use std::marker::PhantomData;
 use std::ptr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
 };
+use private_meta::*;
 
-pub trait MetaData: Sized + 'static {
-    fn new() -> Rc<RefCell<Self>>;
-    fn unique_id(&self) -> usize {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        COUNTER.fetch_add(1, Ordering::Relaxed)
+mod private_meta {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub enum MetaUniqueIDAction {
+        Load,
+        Increment,
+    }
+    
+    pub trait MetaUniqueID {
+        fn unique_node_id(&self, action: MetaUniqueIDAction) -> usize {
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            match action {
+                MetaUniqueIDAction::Load => COUNTER.load(Ordering::Relaxed),
+                MetaUniqueIDAction::Increment => COUNTER.fetch_add(1, Ordering::Relaxed),
+            }
+        }
+        fn unique_edge_id(&self, action: MetaUniqueIDAction) -> usize {
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            match action {
+                MetaUniqueIDAction::Load => COUNTER.load(Ordering::Relaxed),
+                MetaUniqueIDAction::Increment => COUNTER.fetch_add(1, Ordering::Relaxed),
+            }
+        }
     }
 }
 
-// ToDo
-// implement default fn for NodeCache::get_node_cache and get_edge_cache
-// try if you can give N: Node as a parameter for Edge and Meta traits
+pub trait MetaData: Sized + 'static + MetaUniqueID {
+    fn new() -> Rc<Self>;
+    fn new_node_id(&self) -> usize {
+        self.unique_node_id(MetaUniqueIDAction::Increment)
+    }
+    fn last_node_id(&self) -> usize {
+        self.unique_node_id(MetaUniqueIDAction::Load)
+    }
+    fn new_edge_id(&self) -> usize {
+        self.unique_edge_id(MetaUniqueIDAction::Increment)
+    }
+    fn last_edge_id(&self) -> usize {
+        self.unique_edge_id(MetaUniqueIDAction::Load)
+    }
+}
 
 pub trait MetaNodeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: MetaData {
-    fn cache_node(&mut self, node: Rc<N>);
+    fn cache_node(&self, node: Rc<N>);
     fn get_node_cache(&self) -> Vec<Rc<N>>;
 }
 
 pub trait MetaEdgeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: MetaNodeCache<N, V, E> {
-    fn cache_edge(&mut self, edge: Rc<E>);
+    fn cache_edge(&self, edge: Rc<E>);
     fn get_edge_cache(&self) -> Vec<Rc<E>>;
 }
 
@@ -46,7 +76,7 @@ pub enum EdgePos {
 
 pub trait Edge<N: Node<V, Self, M>, V: 'static, M: MetaData>: Sized + 'static {
     fn get_id(&self) -> usize;
-    fn get_self(&self) -> Rc<Self>;
+    fn get_self(&self) -> Option<Rc<Self>>;
     // if node with node_id points in this edge toward a linked node, return linked node (head)
     fn try_head_node(&self, node_id: usize) -> Option<Rc<N>>;
     // if a node points in this edge toward node with node_id, return linked node (tail)
@@ -98,7 +128,12 @@ pub trait EdgeWeighted<N: Node<V, Self, M>, V: 'static, M: MetaData, W>: Edge<N,
 }
 
 pub trait EdgeCache<N: Node<V, Self, M>, V: 'static, M: MetaEdgeCache<N, V, Self>>: Edge<N, V, M> {
-    fn cache_edge(&self, meta: Rc<RefCell<M>>);
+    fn cache_edge(&self, meta: Rc<M>) {
+        meta.cache_edge(self.get_self().unwrap());
+    }
+    fn get_edge_cache(&self, meta: Rc<M>) -> Vec<Rc<Self>> {
+        meta.get_edge_cache()
+    }
 }
 
 pub trait Node<V: 'static, E: Edge<Self, V, M>, M: MetaData>: Sized + 'static {
@@ -106,11 +141,11 @@ pub trait Node<V: 'static, E: Edge<Self, V, M>, M: MetaData>: Sized + 'static {
         let meta = M::new();
         Self::new(value, meta)
     }
-    fn new(value: V, meta: Rc<RefCell<M>>) -> Rc<Self>;
+    fn new(value: V, meta: Rc<M>) -> Rc<Self>;
     fn get_value(&self) -> std::cell::Ref<'_, V>;
     fn get_value_mut(&self) -> std::cell::RefMut<'_, V>;
     fn get_id(&self) -> usize;
-    fn get_meta(&self) -> Rc<RefCell<M>>;
+    fn get_meta(&self) -> Rc<M>;
     fn get_self(&self) -> Option<Rc<Self>>;
     fn add_edge(&self, edge: Rc<E>) -> Rc<E>;
     fn len_edges(&self) -> usize;
@@ -139,12 +174,16 @@ pub trait Node<V: 'static, E: Edge<Self, V, M>, M: MetaData>: Sized + 'static {
 
 pub trait NodeCache<V: 'static, E: Edge<Self, V, M>, M: MetaNodeCache<Self, V, E>>: Node<V, E, M>
 {
-    fn cache_node(&self, meta: Rc<RefCell<M>>);
-    fn get_node_cache(&self, meta: Rc<RefCell<M>>) -> Vec<Rc<Self>>;
+    fn cache_node(&self, meta: Rc<M>) {
+        meta.cache_node(self.get_self().unwrap());
+    }
+    fn get_node_cache(&self, meta: Rc<M>) -> Vec<Rc<Self>> {
+        meta.get_node_cache()
+    }
 }
 
 pub trait NodeEdgeCache<V: 'static, E: Edge<Self, V, M>, M: MetaEdgeCache<Self, V, E>>: NodeCache<V, E, M> {
-    fn get_edge_cache(&self, meta: Rc<RefCell<M>>) -> Vec<Rc<E>>;
+    fn get_edge_cache(&self, meta: Rc<M>) -> Vec<Rc<E>>;
 }
 
 // BaseNodes are always used inside a Rc Ref
@@ -153,15 +192,15 @@ pub struct BaseNode<V: 'static, E: Edge<Self, V, M>, M: MetaData> {
     value: RefCell<V>,
     id: usize,
     selfie: RefCell<Weak<BaseNode<V, E, M>>>,
-    meta: Rc<RefCell<M>>,
+    meta: Rc<M>,
     edges: RefCell<Vec<Rc<E>>>,
 }
 
 impl<V: 'static, E: Edge<Self, V, M>, M: MetaData> Node<V, E, M> for BaseNode<V, E, M> {
-    fn new(value: V, meta: Rc<RefCell<M>>) -> Rc<BaseNode<V, E, M>> {
+    fn new(value: V, meta: Rc<M>) -> Rc<BaseNode<V, E, M>> {
         let node = Rc::new(BaseNode {
             value: RefCell::new(value),
-            id: meta.borrow_mut().unique_id(),
+            id: meta.new_node_id(),
             selfie: RefCell::new(Weak::new()),
             meta: meta.clone(),
             edges: RefCell::new(Vec::new()),
@@ -179,7 +218,7 @@ impl<V: 'static, E: Edge<Self, V, M>, M: MetaData> Node<V, E, M> for BaseNode<V,
     fn get_id(&self) -> usize {
         self.id
     }
-    fn get_meta(&self) -> Rc<RefCell<M>> {
+    fn get_meta(&self) -> Rc<M> {
         self.meta.clone()
     }
     fn get_self(&self) -> Option<Rc<BaseNode<V, E, M>>> {
