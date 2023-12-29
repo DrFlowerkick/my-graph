@@ -1,6 +1,5 @@
 //!lib.rs
 
-use std::any::Any;
 use std::marker::PhantomData;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -9,22 +8,26 @@ use std::{
     rc::{Rc, Weak},
 };
 
-pub trait MetaData {
+pub trait MetaData: Sized + 'static {
     fn new() -> Rc<RefCell<Self>>;
-    fn unique_id(&mut self) -> usize {
+    fn unique_id(&self) -> usize {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         COUNTER.fetch_add(1, Ordering::Relaxed)
     }
 }
 
-pub trait MetaNodeCache<V: 'static, E: Edge, M: MetaData + 'static>: MetaData {
-    fn cache_node(&mut self, node: Rc<impl Node<V, E, M>>);
-    fn get_node_cache(&self) -> Vec<Rc<dyn Any>>;
+// ToDo
+// implement default fn for NodeCache::get_node_cache and get_edge_cache
+// try if you can give N: Node as a parameter for Edge and Meta traits
+
+pub trait MetaNodeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: MetaData {
+    fn cache_node(&mut self, node: Rc<N>);
+    fn get_node_cache(&self) -> Vec<Rc<N>>;
 }
 
-pub trait MetaEdgeCache: MetaData {
-    fn cache_edge(&mut self, edge: Rc<impl Edge>);
-    fn get_edge_cache(&self) -> Vec<Rc<dyn Any>>;
+pub trait MetaEdgeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: MetaNodeCache<N, V, E> {
+    fn cache_edge(&mut self, edge: Rc<E>);
+    fn get_edge_cache(&self) -> Vec<Rc<E>>;
 }
 
 // EdgePos describes position of a Node (identified by it's id) in Edge
@@ -41,24 +44,19 @@ pub enum EdgePos {
     None,
 }
 
-pub trait Edge: Sized + 'static {
-    fn cast_edge(edge: Rc<dyn Any>) -> Rc<Self>;
-    // REQUIRED?
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+pub trait Edge<N: Node<V, Self, M>, V: 'static, M: MetaData>: Sized + 'static {
     fn get_id(&self) -> usize;
     fn get_self(&self) -> Rc<Self>;
     // if node with node_id points in this edge toward a linked node, return linked node (head)
-    fn try_head_node(&self, node_id: usize) -> Option<Rc<dyn Any>>;
+    fn try_head_node(&self, node_id: usize) -> Option<Rc<N>>;
     // if a node points in this edge toward node with node_id, return linked node (tail)
-    fn try_tail_node(&self, node_id: usize) -> Option<Rc<dyn Any>>;
+    fn try_tail_node(&self, node_id: usize) -> Option<Rc<N>>;
     fn edge_end(&self, node_id: usize) -> EdgePos;
 }
 
 // Directed edge
-pub trait EdgeArrow<V: 'static, E: Edge, M: MetaData + 'static>: Edge {
-    fn try_arrow(tail: Rc<impl Node<V, E, M>>, head: Rc<impl Node<V, E, M>>) -> Option<Rc<Self>> {
+pub trait EdgeArrow<N: Node<V, Self, M>, V: 'static, M: MetaData>: Edge<N, V, M> {
+    fn try_arrow(tail: Rc<N>, head: Rc<N>) -> Option<Rc<Self>> {
         // first check of both nodes share same metadata
         if ptr::eq(tail.get_meta().as_ref(), head.get_meta().as_ref()) {
             return Some(Self::new_arrow(tail, head));
@@ -66,14 +64,14 @@ pub trait EdgeArrow<V: 'static, E: Edge, M: MetaData + 'static>: Edge {
         None
     }
     // use metadata of Node to generate unique ID for new arrow
-    fn new_arrow(tail: Rc<impl Node<V, E, M>>, head: Rc<impl Node<V, E, M>>) -> Rc<Self>;
-    fn head_node(&self) -> Rc<dyn Any>;
-    fn tail_node(&self) -> Rc<dyn Any>;
+    fn new_arrow(tail: Rc<N>, head: Rc<N>) -> Rc<Self>;
+    fn head_node(&self) -> Rc<N>;
+    fn tail_node(&self) -> Rc<N>;
 }
 
 // Undirected edge
-pub trait EdgeLink<V: 'static, E: Edge, M: MetaData + 'static>: Edge {
-    fn try_link(tail: Rc<impl Node<V, E, M>>, head: Rc<impl Node<V, E, M>>) -> Option<Rc<Self>> {
+pub trait EdgeLink<N: Node<V, Self, M>, V: 'static, M: MetaData>: Edge<N, V, M> {
+    fn try_link(tail: Rc<N>, head: Rc<N>) -> Option<Rc<Self>> {
         // first check of both nodes share same metadata
         if ptr::eq(tail.get_meta().as_ref(), head.get_meta().as_ref()) {
             return Some(Self::new_link(tail, head));
@@ -81,34 +79,29 @@ pub trait EdgeLink<V: 'static, E: Edge, M: MetaData + 'static>: Edge {
         None
     }
     // use metadata of Node to generate unique ID for new link
-    fn new_link(left: Rc<impl Node<V, E, M>>, right: Rc<impl Node<V, E, M>>) -> Rc<Self>;
-    fn left_node(&self) -> Rc<dyn Any>;
-    fn right_node(&self) -> Rc<dyn Any>;
+    fn new_link(left: Rc<N>, right: Rc<N>) -> Rc<Self>;
+    fn left_node(&self) -> Rc<N>;
+    fn right_node(&self) -> Rc<N>;
 }
 
 // Looping Edge
-pub trait EdgeLoop<V: 'static, E: Edge, M: MetaData + 'static>: Edge {
+pub trait EdgeLoop<N: Node<V, Self, M>, V: 'static, M: MetaData>: Edge<N, V, M> {
     // use metadata of Node to generate unique ID for new loop
-    fn new_loop(node: Rc<impl Node<V, E, M>>) -> Rc<Self>;
-    fn loop_node(&self) -> Rc<dyn Any>;
+    fn new_loop(node: Rc<N>) -> Rc<Self>;
+    fn loop_node(&self) -> Rc<N>;
 }
 
 // Edge with a value
-pub trait EdgeWeighted<W>: Edge {
+pub trait EdgeWeighted<N: Node<V, Self, M>, V: 'static, M: MetaData, W>: Edge<N, V, M> {
     fn set_weight(&mut self, value: W) -> &W;
     fn get_weight(&self) -> &W;
 }
 
-pub trait EdgeCache<M: MetaEdgeCache> {
+pub trait EdgeCache<N: Node<V, Self, M>, V: 'static, M: MetaEdgeCache<N, V, Self>>: Edge<N, V, M> {
     fn cache_edge(&self, meta: Rc<RefCell<M>>);
 }
 
-pub trait Node<V: 'static, E: Edge, M: MetaData + 'static>: Sized + 'static {
-    fn cast_node(node: Rc<dyn Any>) -> Rc<Self>;
-    // REQUIRED?
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+pub trait Node<V: 'static, E: Edge<Self, V, M>, M: MetaData>: Sized + 'static {
     fn alpha_node(value: V) -> Rc<Self> {
         let meta = M::new();
         Self::new(value, meta)
@@ -133,33 +126,30 @@ pub trait Node<V: 'static, E: Edge, M: MetaData + 'static>: Sized + 'static {
     fn iter_heads(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
         Box::new(
             self.iter_edges()
-                .filter_map(|e| e.try_head_node(self.get_id()))
-                .map(|n| Self::cast_node(n)),
+                .filter_map(|e| e.try_head_node(self.get_id())),
         )
     }
     fn iter_tails(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
         Box::new(
             self.iter_edges()
-                .filter_map(|e| e.try_tail_node(self.get_id()))
-                .map(|n| Self::cast_node(n)),
+                .filter_map(|e| e.try_tail_node(self.get_id())),
         )
     }
 }
 
-pub trait NodeCache<V: 'static, E: Edge, M: MetaData + MetaNodeCache<V, E, M> + 'static>:
-    Node<V, E, M>
+pub trait NodeCache<V: 'static, E: Edge<Self, V, M>, M: MetaNodeCache<Self, V, E>>: Node<V, E, M>
 {
     fn cache_node(&self, meta: Rc<RefCell<M>>);
     fn get_node_cache(&self, meta: Rc<RefCell<M>>) -> Vec<Rc<Self>>;
 }
 
-pub trait NodeEdgeCache<M: MetaEdgeCache> {
-    fn get_edge_cache(&self, meta: Rc<RefCell<M>>) -> Vec<Rc<dyn Any>>;
+pub trait NodeEdgeCache<V: 'static, E: Edge<Self, V, M>, M: MetaEdgeCache<Self, V, E>>: NodeCache<V, E, M> {
+    fn get_edge_cache(&self, meta: Rc<RefCell<M>>) -> Vec<Rc<E>>;
 }
 
 // BaseNodes are always used inside a Rc Ref
 // node is used to provide a proper link on the node itself
-pub struct BaseNode<V, E: Edge, M: MetaData> {
+pub struct BaseNode<V: 'static, E: Edge<Self, V, M>, M: MetaData> {
     value: RefCell<V>,
     id: usize,
     selfie: RefCell<Weak<BaseNode<V, E, M>>>,
@@ -167,13 +157,7 @@ pub struct BaseNode<V, E: Edge, M: MetaData> {
     edges: RefCell<Vec<Rc<E>>>,
 }
 
-impl<V: 'static, E: Edge + 'static, M: MetaData + 'static> Node<V, E, M> for BaseNode<V, E, M> {
-    fn cast_node(node: Rc<dyn Any>) -> Rc<Self> {
-        match node.downcast::<Self>() {
-            Ok(node) => node,
-            Err(_) => panic!("node is not of type BaseNode"),
-        }
-    }
+impl<V: 'static, E: Edge<Self, V, M>, M: MetaData> Node<V, E, M> for BaseNode<V, E, M> {
     fn new(value: V, meta: Rc<RefCell<M>>) -> Rc<BaseNode<V, E, M>> {
         let node = Rc::new(BaseNode {
             value: RefCell::new(value),
@@ -213,7 +197,7 @@ impl<V: 'static, E: Edge + 'static, M: MetaData + 'static> Node<V, E, M> for Bas
     }
 }
 
-pub struct IterEdges<N: Node<V, E, M>, V: 'static, E: Edge, M: MetaData + 'static> {
+pub struct IterEdges<N: Node<V, E, M>, V: 'static, E: Edge<N, V, M>, M: MetaData> {
     node: Rc<N>,
     edge_index: usize,
     _v: PhantomData<V>,
@@ -222,7 +206,7 @@ pub struct IterEdges<N: Node<V, E, M>, V: 'static, E: Edge, M: MetaData + 'stati
     finished: bool, // true if iterator finished
 }
 
-impl<'a, N: Node<V, E, M>, V, E: Edge, M: MetaData> IterEdges<N, V, E, M> {
+impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> IterEdges<N, V, E, M> {
     pub fn new(node: Rc<N>) -> Self {
         IterEdges {
             node,
@@ -235,7 +219,7 @@ impl<'a, N: Node<V, E, M>, V, E: Edge, M: MetaData> IterEdges<N, V, E, M> {
     }
 }
 
-impl<'a, N: Node<V, E, M>, V, E: Edge, M: MetaData> Iterator for IterEdges<N, V, E, M> {
+impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> Iterator for IterEdges<N, V, E, M> {
     type Item = Rc<E>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -258,7 +242,7 @@ impl<'a, N: Node<V, E, M>, V, E: Edge, M: MetaData> Iterator for IterEdges<N, V,
     }
 }
 
-impl<'a, N: Node<V, E, M>, V, E: Edge, M: MetaData> ExactSizeIterator for IterEdges<N, V, E, M> {
+impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> ExactSizeIterator for IterEdges<N, V, E, M> {
     fn len(&self) -> usize {
         self.node.len_edges()
     }
