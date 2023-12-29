@@ -1,12 +1,14 @@
 //!lib.rs
 
+// BIG TODO NOW: seperate code in different modules to clean up and make code better readable
+
+use private_meta::*;
 use std::marker::PhantomData;
 use std::ptr;
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
 };
-use private_meta::*;
 
 mod private_meta {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,7 +17,7 @@ mod private_meta {
         Load,
         Increment,
     }
-    
+
     pub trait MetaUniqueID {
         fn unique_node_id(&self, action: MetaUniqueIDAction) -> usize {
             static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -55,7 +57,9 @@ pub trait MetaNodeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: M
     fn get_node_cache(&self) -> Vec<Rc<N>>;
 }
 
-pub trait MetaEdgeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: MetaNodeCache<N, V, E> {
+pub trait MetaEdgeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>:
+    MetaNodeCache<N, V, E>
+{
     fn cache_edge(&self, edge: Rc<E>);
     fn get_edge_cache(&self) -> Vec<Rc<E>>;
 }
@@ -127,7 +131,9 @@ pub trait EdgeWeighted<N: Node<V, Self, M>, V: 'static, M: MetaData, W>: Edge<N,
     fn get_weight(&self) -> &W;
 }
 
-pub trait EdgeCache<N: Node<V, Self, M>, V: 'static, M: MetaEdgeCache<N, V, Self>>: Edge<N, V, M> {
+pub trait EdgeCache<N: Node<V, Self, M>, V: 'static, M: MetaEdgeCache<N, V, Self>>:
+    Edge<N, V, M>
+{
     fn cache_edge(&self, meta: Rc<M>) {
         meta.cache_edge(self.get_self().unwrap());
     }
@@ -172,7 +178,8 @@ pub trait Node<V: 'static, E: Edge<Self, V, M>, M: MetaData>: Sized + 'static {
     }
 }
 
-pub trait NodeCache<V: 'static, E: Edge<Self, V, M>, M: MetaNodeCache<Self, V, E>>: Node<V, E, M>
+pub trait NodeCache<V: 'static, E: Edge<Self, V, M>, M: MetaNodeCache<Self, V, E>>:
+    Node<V, E, M>
 {
     fn cache_node(&self, meta: Rc<M>) {
         meta.cache_node(self.get_self().unwrap());
@@ -182,7 +189,9 @@ pub trait NodeCache<V: 'static, E: Edge<Self, V, M>, M: MetaNodeCache<Self, V, E
     }
 }
 
-pub trait NodeEdgeCache<V: 'static, E: Edge<Self, V, M>, M: MetaEdgeCache<Self, V, E>>: NodeCache<V, E, M> {
+pub trait NodeEdgeCache<V: 'static, E: Edge<Self, V, M>, M: MetaEdgeCache<Self, V, E>>:
+    NodeCache<V, E, M>
+{
     fn get_edge_cache(&self, meta: Rc<M>) -> Vec<Rc<E>>;
 }
 
@@ -222,10 +231,7 @@ impl<V: 'static, E: Edge<Self, V, M>, M: MetaData> Node<V, E, M> for BaseNode<V,
         self.meta.clone()
     }
     fn get_self(&self) -> Option<Rc<BaseNode<V, E, M>>> {
-        match self.selfie.borrow().upgrade() {
-            Some(ref node) => Some(node.clone()),
-            None => None,
-        }
+        self.selfie.borrow().upgrade().as_ref().cloned()
     }
     fn add_edge(&self, edge: Rc<E>) -> Rc<E> {
         self.edges.borrow_mut().push(edge.clone());
@@ -245,7 +251,7 @@ pub struct IterEdges<N: Node<V, E, M>, V: 'static, E: Edge<N, V, M>, M: MetaData
     finished: bool, // true if iterator finished
 }
 
-impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> IterEdges<N, V, E, M> {
+impl<N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> IterEdges<N, V, E, M> {
     pub fn new(node: Rc<N>) -> Self {
         IterEdges {
             node,
@@ -258,7 +264,7 @@ impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> IterEdges<N, V, E, 
     }
 }
 
-impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> Iterator for IterEdges<N, V, E, M> {
+impl<N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> Iterator for IterEdges<N, V, E, M> {
     type Item = Rc<E>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -281,7 +287,9 @@ impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> Iterator for IterEd
     }
 }
 
-impl<'a, N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> ExactSizeIterator for IterEdges<N, V, E, M> {
+impl<N: Node<V, E, M>, V, E: Edge<N, V, M>, M: MetaData> ExactSizeIterator
+    for IterEdges<N, V, E, M>
+{
     fn len(&self) -> usize {
         self.node.len_edges()
     }
