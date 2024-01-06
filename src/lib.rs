@@ -1,10 +1,12 @@
 //!lib.rs
 
 // BIG TODO NOW: seperate code in different modules to clean up and make code better readable
+// Add fn() for removing nodes and edges
+// Implement basic structs for edges and meta data
+// Create Tree struct
 
 use private_meta::*;
 use std::marker::PhantomData;
-use std::ptr;
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
@@ -90,38 +92,21 @@ pub trait Edge<N: Node<V, Self, M>, V: 'static, M: MetaData>: Sized + 'static {
 
 // Directed edge
 pub trait EdgeArrow<N: Node<V, Self, M>, V: 'static, M: MetaData>: Edge<N, V, M> {
-    fn try_arrow(tail: Rc<N>, head: Rc<N>) -> Option<Rc<Self>> {
-        // first check of both nodes share same metadata
-        if ptr::eq(tail.get_meta().as_ref(), head.get_meta().as_ref()) {
-            return Some(Self::new_arrow(tail, head));
-        }
-        None
-    }
-    // use metadata of Node to generate unique ID for new arrow
-    fn new_arrow(tail: Rc<N>, head: Rc<N>) -> Rc<Self>;
+    fn new_arrow(tail: Rc<N>, head: Rc<N>, meta: Rc<M>) -> Rc<Self>;
     fn head_node(&self) -> Rc<N>;
     fn tail_node(&self) -> Rc<N>;
 }
 
 // Undirected edge
 pub trait EdgeLink<N: Node<V, Self, M>, V: 'static, M: MetaData>: Edge<N, V, M> {
-    fn try_link(tail: Rc<N>, head: Rc<N>) -> Option<Rc<Self>> {
-        // first check of both nodes share same metadata
-        if ptr::eq(tail.get_meta().as_ref(), head.get_meta().as_ref()) {
-            return Some(Self::new_link(tail, head));
-        }
-        None
-    }
-    // use metadata of Node to generate unique ID for new link
-    fn new_link(left: Rc<N>, right: Rc<N>) -> Rc<Self>;
+    fn new_link(left: Rc<N>, right: Rc<N>, meta: Rc<M>) -> Rc<Self>;
     fn left_node(&self) -> Rc<N>;
     fn right_node(&self) -> Rc<N>;
 }
 
 // Looping Edge
 pub trait EdgeLoop<N: Node<V, Self, M>, V: 'static, M: MetaData>: Edge<N, V, M> {
-    // use metadata of Node to generate unique ID for new loop
-    fn new_loop(node: Rc<N>) -> Rc<Self>;
+    fn new_loop(node: Rc<N>, meta: Rc<M>) -> Rc<Self>;
     fn loop_node(&self) -> Rc<N>;
 }
 
@@ -143,15 +128,10 @@ pub trait EdgeCache<N: Node<V, Self, M>, V: 'static, M: MetaEdgeCache<N, V, Self
 }
 
 pub trait Node<V: 'static, E: Edge<Self, V, M>, M: MetaData>: Sized + 'static {
-    fn alpha_node(value: V) -> Rc<Self> {
-        let meta = M::new();
-        Self::new(value, meta)
-    }
     fn new(value: V, meta: Rc<M>) -> Rc<Self>;
     fn get_value(&self) -> std::cell::Ref<'_, V>;
     fn get_value_mut(&self) -> std::cell::RefMut<'_, V>;
     fn get_id(&self) -> usize;
-    fn get_meta(&self) -> Rc<M>;
     fn get_self(&self) -> Option<Rc<Self>>;
     fn add_edge(&self, edge: Rc<E>) -> Rc<E>;
     fn len_edges(&self) -> usize;
@@ -189,19 +169,12 @@ pub trait NodeCache<V: 'static, E: Edge<Self, V, M>, M: MetaNodeCache<Self, V, E
     }
 }
 
-pub trait NodeEdgeCache<V: 'static, E: Edge<Self, V, M>, M: MetaEdgeCache<Self, V, E>>:
-    NodeCache<V, E, M>
-{
-    fn get_edge_cache(&self, meta: Rc<M>) -> Vec<Rc<E>>;
-}
-
 // BaseNodes are always used inside a Rc Ref
 // node is used to provide a proper link on the node itself
 pub struct BaseNode<V: 'static, E: Edge<Self, V, M>, M: MetaData> {
     value: RefCell<V>,
     id: usize,
     selfie: RefCell<Weak<BaseNode<V, E, M>>>,
-    meta: Rc<M>,
     edges: RefCell<Vec<Rc<E>>>,
 }
 
@@ -211,7 +184,6 @@ impl<V: 'static, E: Edge<Self, V, M>, M: MetaData> Node<V, E, M> for BaseNode<V,
             value: RefCell::new(value),
             id: meta.new_node_id(),
             selfie: RefCell::new(Weak::new()),
-            meta: meta.clone(),
             edges: RefCell::new(Vec::new()),
         });
         let selfie = Rc::downgrade(&node);
@@ -226,9 +198,6 @@ impl<V: 'static, E: Edge<Self, V, M>, M: MetaData> Node<V, E, M> for BaseNode<V,
     }
     fn get_id(&self) -> usize {
         self.id
-    }
-    fn get_meta(&self) -> Rc<M> {
-        self.meta.clone()
     }
     fn get_self(&self) -> Option<Rc<BaseNode<V, E, M>>> {
         self.selfie.borrow().upgrade().as_ref().cloned()
