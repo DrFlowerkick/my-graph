@@ -53,9 +53,17 @@ pub trait HeadEdgeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>:
     fn get_edge_cache(&self) -> std::cell::Ref<'_, Vec<Rc<E>>>;
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum EdgeType {
+    Arrow,
+    Link,
+    Loop,
+}
+
 pub trait Edge<N: Node<V, Self, H>, V: 'static, H: Head>: Sized + 'static {
     fn get_id(&self) -> usize;
     fn get_self(&self) -> Option<Rc<Self>>;
+    fn get_edge_type(&self) -> EdgeType;
     // if node with node_id points in this edge toward a linked node, return linked node (head)
     fn try_head_node(&self, node_id: usize) -> Option<Rc<N>>;
     // if a node points in this edge toward node with node_id, return linked node (tail)
@@ -65,21 +73,21 @@ pub trait Edge<N: Node<V, Self, H>, V: 'static, H: Head>: Sized + 'static {
 // Directed edge
 pub trait EdgeArrow<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
     fn new_arrow(tail: Rc<N>, head: Rc<N>, meta: Rc<H>) -> Rc<Self>;
-    fn head_node(&self) -> Rc<N>;
-    fn tail_node(&self) -> Rc<N>;
+    fn head_node(&self) -> Option<Rc<N>>;
+    fn tail_node(&self) -> Option<Rc<N>>;
 }
 
 // Undirected edge
 pub trait EdgeLink<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
     fn new_link(left: Rc<N>, right: Rc<N>, meta: Rc<H>) -> Rc<Self>;
-    fn left_node(&self) -> Rc<N>;
-    fn right_node(&self) -> Rc<N>;
+    fn left_node(&self) -> Option<Rc<N>>;
+    fn right_node(&self) -> Option<Rc<N>>;
 }
 
 // Looping Edge
 pub trait EdgeLoop<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
     fn new_loop(node: Rc<N>, meta: Rc<H>) -> Rc<Self>;
-    fn loop_node(&self) -> Rc<N>;
+    fn loop_node(&self) -> Option<Rc<N>>;
 }
 
 // Edge with a value
