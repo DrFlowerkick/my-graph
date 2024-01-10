@@ -1,12 +1,10 @@
 //!basenode.rs
 
-
-use crate::core::{Node, Edge, Head};
+use crate::core::{Edge, Head, Node};
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
 };
-
 
 // BaseNodes are always used inside a Rc Ref
 // selfie is used to provide a proper link on the node itself
@@ -49,4 +47,3 @@ impl<V: 'static, E: Edge<Self, V, H>, H: Head> Node<V, E, H> for BaseNode<V, E, 
         self.edges.borrow().len()
     }
 }
-

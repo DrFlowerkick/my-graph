@@ -64,9 +64,9 @@ pub trait Edge<N: Node<V, Self, H>, V: 'static, H: Head>: Sized + 'static {
     fn get_id(&self) -> usize;
     fn get_self(&self) -> Option<Rc<Self>>;
     fn get_edge_type(&self) -> EdgeType;
-    // if node with node_id points in this edge toward a linked node, return linked node (head)
+    // if node with node_id points inside this edge toward another node, return node pointed to (head)
     fn try_head_node(&self, node_id: usize) -> Option<Rc<N>>;
-    // if a node points in this edge toward node with node_id, return linked node (tail)
+    // if a node of this edge points toward node with node_id, return node pointed from (tail)
     fn try_tail_node(&self, node_id: usize) -> Option<Rc<N>>;
 }
 
@@ -91,9 +91,11 @@ pub trait EdgeLoop<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
 }
 
 // Edge with a value
-pub trait EdgeWeighted<N: Node<V, Self, H>, V: 'static, H: Head, W>: Edge<N, V, H> {
-    fn set_weight(&mut self, value: W) -> &W;
-    fn get_weight(&self) -> &W;
+pub trait EdgeWeighted<N: Node<V, Self, H>, V: 'static, H: Head, W: Default + 'static>:
+    Edge<N, V, H>
+{
+    fn get_weight(&self) -> std::cell::Ref<'_, W>;
+    fn get_weight_mut(&self) -> std::cell::RefMut<'_, W>;
 }
 
 pub trait Node<V: 'static, E: Edge<Self, V, H>, H: Head>: Sized + 'static {

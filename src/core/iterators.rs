@@ -1,6 +1,6 @@
 //!iterators.rs
 
-use super::{Node, Edge, Head};
+use super::{Edge, Head, Node};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
@@ -49,9 +49,7 @@ impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> Iterator for IterEdges<N, V
     }
 }
 
-impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> ExactSizeIterator
-    for IterEdges<N, V, E, H>
-{
+impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> ExactSizeIterator for IterEdges<N, V, E, H> {
     fn len(&self) -> usize {
         self.node.len_edges()
     }
