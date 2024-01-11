@@ -1,6 +1,8 @@
 //!baseedge.rs
 
-use crate::core::{Edge, EdgeArrow, EdgeLink, EdgeLoop, EdgeType, EdgeWeighted, Head, Node};
+use crate::core::{
+    Edge, EdgeArrow, EdgeLink, EdgeLoop, EdgeType, EdgeWeighted, Head, HeadNodeCache, Node,
+};
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
@@ -8,26 +10,33 @@ use std::{
 
 // BaseEdge implements all types of edge, which has some side effects:
 // 1. Nodes have references on edges and edges have references on nodes.
-// Therefore it is very easy to create
+// Therefore it is very easy to create reference cycles, if "strong"
+// Rc smart pointers are used. I decided to redesign the structure
+// of edges. Edges will be Links. Meta will be removed.
 
-enum EdgeAlpha<N> {
+enum EdgeEnd<N> {
     None,
-    Tail(Weak<N>),
-    Left(Rc<N>),
+    Weak(Weak<N>),
+    Strong(Rc<N>),
 }
 
-enum EdgeOmega<N> {
-    Head(Rc<N>),
-    Right(Rc<N>),
-    Loop(Weak<N>),
+impl<N> EdgeEnd<N> {
+    fn try_node(&self) -> Option<Rc<N>> {
+        match self {
+            EdgeEnd::None => None,
+            EdgeEnd::Weak(weak) => weak.upgrade().as_ref().cloned(),
+            EdgeEnd::Strong(node) => Some(node.clone()),
+        }
+    }
 }
 
 pub struct BaseEdge<N: Node<V, Self, H>, V: 'static, H: Head, W: Default + 'static> {
     weight: RefCell<W>,
+    edge_type: EdgeType,
     id: usize,
     selfie: RefCell<Weak<BaseEdge<N, V, H, W>>>,
-    alpha: EdgeAlpha<N>,
-    omega: EdgeOmega<N>,
+    alpha: EdgeEnd<N>,
+    omega: EdgeEnd<N>,
 }
 
 impl<N: Node<V, Self, H>, V: 'static, H: Head, W: Default + 'static> Edge<N, V, H>
@@ -40,90 +49,79 @@ impl<N: Node<V, Self, H>, V: 'static, H: Head, W: Default + 'static> Edge<N, V, 
         self.selfie.borrow().upgrade().as_ref().cloned()
     }
     fn get_edge_type(&self) -> EdgeType {
-        match (&self.alpha, &self.omega) {
-            (EdgeAlpha::Tail(_), EdgeOmega::Head(_)) => EdgeType::Arrow,
-            (EdgeAlpha::Left(_), EdgeOmega::Right(_)) => EdgeType::Link,
-            (EdgeAlpha::None, EdgeOmega::Loop(_)) => EdgeType::Loop,
-            _ => panic!("unknown edge end configuration"),
-        }
+        self.edge_type
     }
     // if node with node_id points inside this edge toward another node, return node pointed to (head)
     fn try_head_node(&self, node_id: usize) -> Option<Rc<N>> {
-        match &self.alpha {
-            EdgeAlpha::Tail(weak) => {
-                if let Some(node) = weak.upgrade() {
+        match self.edge_type {
+            EdgeType::Arrow => {
+                if let Some(node) = &self.alpha.try_node() {
                     if node.get_id() == node_id {
-                        if let EdgeOmega::Head(head) = &self.omega {
-                            return Some(head.clone());
-                        }
+                        return self.omega.try_node();
                     }
                 }
             }
-            EdgeAlpha::Left(node) => {
-                if node.get_id() == node_id {
-                    if let EdgeOmega::Right(head) = &self.omega {
-                        return Some(head.clone());
-                    }
-                }
-            }
-            EdgeAlpha::None => (),
-        }
-        match &self.omega {
-            EdgeOmega::Right(node) => {
-                if node.get_id() == node_id {
-                    if let EdgeAlpha::Left(head) = &self.alpha {
-                        return Some(head.clone());
-                    }
-                }
-            }
-            EdgeOmega::Loop(weak) => {
-                if let Some(node) = weak.upgrade() {
+            EdgeType::Link => {
+                if let Some(node) = &self.alpha.try_node() {
                     if node.get_id() == node_id {
-                        return Some(node.clone());
+                        return self.omega.try_node();
+                    }
+                }
+                if let Some(node) = &self.omega.try_node() {
+                    if node.get_id() == node_id {
+                        return self.alpha.try_node();
                     }
                 }
             }
-            EdgeOmega::Head(_) => (),
+            EdgeType::Loop => {
+                if let Some(node) = &self.omega.try_node() {
+                    if node.get_id() == node_id {
+                        return self.alpha.try_node();
+                    }
+                }
+            }
         }
         None
     }
     // if a node of this edge points toward node with node_id, return node pointed from (tail)
     fn try_tail_node(&self, node_id: usize) -> Option<Rc<N>> {
-        match &self.omega {
-            EdgeOmega::Head(node) => {
-                if node.get_id() == node_id {
-                    if let EdgeAlpha::Tail(weak) = &self.alpha {
-                        if let Some(tail) = weak.upgrade() {
-                            return Some(tail.clone());
-                        }
-                    }
-                }
-            }
-            EdgeOmega::Right(node) => {
-                if node.get_id() == node_id {
-                    if let EdgeAlpha::Left(tail) = &self.alpha {
-                        return Some(tail.clone());
-                    }
-                }
-            }
-            EdgeOmega::Loop(weak) => {
-                if let Some(node) = weak.upgrade() {
+        match self.edge_type {
+            EdgeType::Arrow => {
+                if let Some(node) = &self.omega.try_node() {
                     if node.get_id() == node_id {
-                        return Some(node.clone());
+                        return self.alpha.try_node();
                     }
                 }
             }
-        }
-        if let EdgeAlpha::Left(node) = &self.alpha {
-            if node.get_id() == node_id {
-                if let EdgeOmega::Right(tail) = &self.omega {
-                    return Some(tail.clone());
+            EdgeType::Link => {
+                if let Some(node) = &self.alpha.try_node() {
+                    if node.get_id() == node_id {
+                        return self.omega.try_node();
+                    }
+                }
+                if let Some(node) = &self.omega.try_node() {
+                    if node.get_id() == node_id {
+                        return self.alpha.try_node();
+                    }
+                }
+            }
+            EdgeType::Loop => {
+                if let Some(node) = &self.omega.try_node() {
+                    if node.get_id() == node_id {
+                        return self.alpha.try_node();
+                    }
                 }
             }
         }
         None
     }
 }
+
+
+// Thinking more and more about circular ownership. With graphs, were node contain the Information about thier edges,
+// circular ownership or references cannot be prevented, of strong (normal) Rc smart pointers are used.
+// You have to use weak pointers. But than you always have to cache nodes, because every node inside a weak edge ref would
+// be dropped, the moment the node goes out of scope.+
 
 impl<N: Node<V, Self, H>, V: 'static, H: Head, W: Default> EdgeArrow<N, V, H>
     for BaseEdge<N, V, H, W>
@@ -131,53 +129,59 @@ impl<N: Node<V, Self, H>, V: 'static, H: Head, W: Default> EdgeArrow<N, V, H>
     fn new_arrow(tail: Rc<N>, head: Rc<N>, meta: Rc<H>) -> Rc<Self> {
         let arrow = Rc::new(Self {
             weight: RefCell::new(W::default()),
+            edge_type: EdgeType::Arrow,
             id: meta.new_edge_id(),
             selfie: RefCell::new(Weak::new()),
-            alpha: EdgeAlpha::Tail(Rc::downgrade(&tail)),
-            omega: EdgeOmega::Head(head),
+            alpha: EdgeEnd::Weak(Rc::downgrade(&tail)),
+            omega: EdgeEnd::Strong(head),
         });
         let selfie = Rc::downgrade(&arrow);
         *arrow.selfie.borrow_mut() = selfie;
         arrow
     }
     fn head_node(&self) -> Option<Rc<N>> {
-        match &self.omega {
-            EdgeOmega::Head(node) => Some(node.clone()),
+        match self.edge_type {
+            EdgeType::Arrow => self.omega.try_node(),
             _ => None,
         }
     }
     fn tail_node(&self) -> Option<Rc<N>> {
-        match &self.alpha {
-            EdgeAlpha::Tail(node) => node.upgrade().as_ref().cloned(),
+        match self.edge_type {
+            EdgeType::Arrow => self.alpha.try_node(),
             _ => None,
         }
     }
 }
 
-impl<N: Node<V, Self, H>, V: 'static, H: Head, W: Default> EdgeLink<N, V, H>
+
+// In a Link edge (undirected edge) no node has ownership over the other
+// To prevent reference cycles (see https://doc.rust-lang.org/book/ch15-06-reference-cycles.html)
+// new_link must use weak links
+impl<N: Node<V, Self, H>, V: 'static, H: HeadNodeCache<N, V, Self>, W: Default> EdgeLink<N, V, H>
     for BaseEdge<N, V, H, W>
 {
     fn new_link(left: Rc<N>, right: Rc<N>, meta: Rc<H>) -> Rc<Self> {
         let link = Rc::new(Self {
             weight: RefCell::new(W::default()),
+            edge_type: EdgeType::Link,
             id: meta.new_edge_id(),
             selfie: RefCell::new(Weak::new()),
-            alpha: EdgeAlpha::Left(left),
-            omega: EdgeOmega::Right(right),
+            alpha: EdgeEnd::Weak(Rc::downgrade(&left)),
+            omega: EdgeEnd::Weak(Rc::downgrade(&right)),
         });
         let selfie = Rc::downgrade(&link);
         *link.selfie.borrow_mut() = selfie;
         link
     }
     fn right_node(&self) -> Option<Rc<N>> {
-        match &self.omega {
-            EdgeOmega::Right(node) => Some(node.clone()),
+        match self.edge_type {
+            EdgeType::Link => self.omega.try_node(),
             _ => None,
         }
     }
     fn left_node(&self) -> Option<Rc<N>> {
-        match &self.alpha {
-            EdgeAlpha::Left(node) => Some(node.clone()),
+        match self.edge_type {
+            EdgeType::Link => self.alpha.try_node(),
             _ => None,
         }
     }
@@ -189,18 +193,19 @@ impl<N: Node<V, Self, H>, V: 'static, H: Head, W: Default> EdgeLoop<N, V, H>
     fn new_loop(node: Rc<N>, meta: Rc<H>) -> Rc<Self> {
         let loop_node = Rc::new(Self {
             weight: RefCell::new(W::default()),
+            edge_type: EdgeType::Loop,
             id: meta.new_edge_id(),
             selfie: RefCell::new(Weak::new()),
-            alpha: EdgeAlpha::None,
-            omega: EdgeOmega::Loop(Rc::downgrade(&node)),
+            alpha: EdgeEnd::None,
+            omega: EdgeEnd::Weak(Rc::downgrade(&node)),
         });
         let selfie = Rc::downgrade(&loop_node);
         *loop_node.selfie.borrow_mut() = selfie;
         loop_node
     }
     fn loop_node(&self) -> Option<Rc<N>> {
-        match &self.omega {
-            EdgeOmega::Loop(node) => node.upgrade().as_ref().cloned(),
+        match self.edge_type {
+            EdgeType::Link => self.omega.try_node(),
             _ => None,
         }
     }

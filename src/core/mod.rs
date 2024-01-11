@@ -78,7 +78,9 @@ pub trait EdgeArrow<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
 }
 
 // Undirected edge
-pub trait EdgeLink<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
+pub trait EdgeLink<N: Node<V, Self, H>, V: 'static, H: HeadNodeCache<N, V, Self>>:
+    Edge<N, V, H>
+{
     fn new_link(left: Rc<N>, right: Rc<N>, meta: Rc<H>) -> Rc<Self>;
     fn left_node(&self) -> Option<Rc<N>>;
     fn right_node(&self) -> Option<Rc<N>>;
