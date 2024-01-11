@@ -1,23 +1,23 @@
 //!iterators.rs
 
-use super::{Edge, Head, Node};
+use super::{Link, Node};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-pub struct IterEdges<N: Node<V, E, H>, V: 'static, E: Edge<N, V, H>, H: Head> {
+pub struct IterLinks<N: Node<V, L, W>, V: 'static, L: Link<N, V, W>, W: Default + 'static> {
     node: Rc<N>,
-    edge_index: usize,
+    link_index: usize,
     _v: PhantomData<V>,
-    _e: PhantomData<E>,
-    _m: PhantomData<H>,
+    _e: PhantomData<L>,
+    _m: PhantomData<W>,
     finished: bool, // true if iterator finished
 }
 
-impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> IterEdges<N, V, E, H> {
+impl<N: Node<V, L, W>, V, L: Link<N, V, W>, W: Default> IterLinks<N, V, L, W> {
     pub fn new(node: Rc<N>) -> Self {
-        IterEdges {
+        IterLinks {
             node,
-            edge_index: 0,
+            link_index: 0,
             _v: PhantomData,
             _e: PhantomData,
             _m: PhantomData,
@@ -26,16 +26,16 @@ impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> IterEdges<N, V, E, H> {
     }
 }
 
-impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> Iterator for IterEdges<N, V, E, H> {
-    type Item = Rc<E>;
+impl<N: Node<V, L, W>, V, L: Link<N, V, W>, W: Default> Iterator for IterLinks<N, V, L, W> {
+    type Item = Rc<L>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.finished {
             return None; // iterator finished
         }
-        match self.node.get_edge(self.edge_index) {
+        match self.node.get_link(self.link_index) {
             Some(node) => {
-                self.edge_index += 1;
+                self.link_index += 1;
                 Some(node)
             }
             None => {
@@ -45,12 +45,14 @@ impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> Iterator for IterEdges<N, V
         }
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(self.node.len_edges()))
+        (0, Some(self.node.len_links()))
     }
 }
 
-impl<N: Node<V, E, H>, V, E: Edge<N, V, H>, H: Head> ExactSizeIterator for IterEdges<N, V, E, H> {
+impl<N: Node<V, L, W>, V, L: Link<N, V, W>, W: Default> ExactSizeIterator
+    for IterLinks<N, V, L, W>
+{
     fn len(&self) -> usize {
-        self.node.len_edges()
+        self.node.len_links()
     }
 }

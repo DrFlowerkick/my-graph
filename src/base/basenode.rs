@@ -1,6 +1,7 @@
 //!basenode.rs
 
-use crate::core::{Edge, Head, Node};
+use crate::core::{Link, Node};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
@@ -8,20 +9,21 @@ use std::{
 
 // BaseNodes are always used inside a Rc Ref
 // selfie is used to provide a proper link on the node itself
-pub struct BaseNode<V: 'static, E: Edge<Self, V, H>, H: Head> {
+pub struct BaseNode<V: 'static, L: Link<Self, V, W>, W: Default + 'static> {
     value: RefCell<V>,
     id: usize,
-    selfie: RefCell<Weak<BaseNode<V, E, H>>>,
-    edges: RefCell<Vec<Rc<E>>>,
+    selfie: RefCell<Weak<BaseNode<V, L, W>>>,
+    links: RefCell<Vec<Rc<L>>>,
 }
 
-impl<V: 'static, E: Edge<Self, V, H>, H: Head> Node<V, E, H> for BaseNode<V, E, H> {
-    fn new(value: V, meta: Rc<H>) -> Rc<BaseNode<V, E, H>> {
+impl<V: 'static, L: Link<Self, V, W>, W: Default + 'static> Node<V, L, W> for BaseNode<V, L, W> {
+    fn new(value: V) -> Rc<BaseNode<V, L, W>> {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let node = Rc::new(BaseNode {
             value: RefCell::new(value),
-            id: meta.new_node_id(),
+            id: COUNTER.fetch_add(1, Ordering::Relaxed),
             selfie: RefCell::new(Weak::new()),
-            edges: RefCell::new(Vec::new()),
+            links: RefCell::new(Vec::new()),
         });
         let selfie = Rc::downgrade(&node);
         *node.selfie.borrow_mut() = selfie;
@@ -36,14 +38,14 @@ impl<V: 'static, E: Edge<Self, V, H>, H: Head> Node<V, E, H> for BaseNode<V, E, 
     fn get_id(&self) -> usize {
         self.id
     }
-    fn get_self(&self) -> Option<Rc<BaseNode<V, E, H>>> {
+    fn get_self(&self) -> Option<Rc<BaseNode<V, L, W>>> {
         self.selfie.borrow().upgrade().as_ref().cloned()
     }
-    fn add_edge(&self, edge: Rc<E>) -> Rc<E> {
-        self.edges.borrow_mut().push(edge.clone());
+    fn add_link(&self, edge: Rc<L>) -> Rc<L> {
+        self.links.borrow_mut().push(edge.clone());
         edge
     }
-    fn len_edges(&self) -> usize {
-        self.edges.borrow().len()
+    fn len_links(&self) -> usize {
+        self.links.borrow().len()
     }
 }

@@ -2,131 +2,62 @@
 
 pub mod iterators;
 
-use iterators::IterEdges;
+use iterators::IterLinks;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub enum HeadUniqueIDAction {
-    Load,
-    Increment,
+pub trait LinkBuilder<L, N, W: Default> {
+    fn new() -> Self;
+    fn set_weight(self, weight: W) -> Self;
+    fn set_alpha_weak(self, node: Rc<N>) -> Self;
+    fn set_alpha_strong(self, node: Rc<N>) -> Self;
+    fn set_omega_weak(self, node: Rc<N>) -> Self;
+    fn set_omega_strong(self, node: Rc<N>) -> Self;
+    fn build(self) -> Rc<L>;
 }
 
-pub trait Head: Sized + 'static {
-    fn new() -> Rc<Self>;
-    fn new_node_id(&self) -> usize {
-        self.unique_node_id(HeadUniqueIDAction::Increment)
-    }
-    fn last_node_id(&self) -> usize {
-        self.unique_node_id(HeadUniqueIDAction::Load)
-    }
-    fn new_edge_id(&self) -> usize {
-        self.unique_edge_id(HeadUniqueIDAction::Increment)
-    }
-    fn last_edge_id(&self) -> usize {
-        self.unique_edge_id(HeadUniqueIDAction::Load)
-    }
-    fn unique_node_id(&self, action: HeadUniqueIDAction) -> usize {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        match action {
-            HeadUniqueIDAction::Load => COUNTER.load(Ordering::Relaxed),
-            HeadUniqueIDAction::Increment => COUNTER.fetch_add(1, Ordering::Relaxed),
-        }
-    }
-    fn unique_edge_id(&self, action: HeadUniqueIDAction) -> usize {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        match action {
-            HeadUniqueIDAction::Load => COUNTER.load(Ordering::Relaxed),
-            HeadUniqueIDAction::Increment => COUNTER.fetch_add(1, Ordering::Relaxed),
-        }
-    }
-}
-
-pub trait HeadNodeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>: Head {
-    fn cache_node(&self, node: Rc<N>);
-    fn get_node_cache(&self) -> std::cell::Ref<'_, Vec<Rc<N>>>;
-}
-
-pub trait HeadEdgeCache<N: Node<V, E, Self>, V: 'static, E: Edge<N, V, Self>>:
-    HeadNodeCache<N, V, E>
-{
-    fn cache_edge(&self, edge: Rc<E>);
-    fn get_edge_cache(&self) -> std::cell::Ref<'_, Vec<Rc<E>>>;
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum EdgeType {
-    Arrow,
-    Link,
-    Loop,
-}
-
-pub trait Edge<N: Node<V, Self, H>, V: 'static, H: Head>: Sized + 'static {
+pub trait Link<N: Node<V, Self, W>, V: 'static, W: Default + 'static>: Sized + 'static {
     fn get_id(&self) -> usize;
     fn get_self(&self) -> Option<Rc<Self>>;
-    fn get_edge_type(&self) -> EdgeType;
-    // if node with node_id points inside this edge toward another node, return node pointed to (head)
-    fn try_head_node(&self, node_id: usize) -> Option<Rc<N>>;
-    // if a node of this edge points toward node with node_id, return node pointed from (tail)
-    fn try_tail_node(&self, node_id: usize) -> Option<Rc<N>>;
-}
-
-// Directed edge
-pub trait EdgeArrow<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
-    fn new_arrow(tail: Rc<N>, head: Rc<N>, meta: Rc<H>) -> Rc<Self>;
-    fn head_node(&self) -> Option<Rc<N>>;
-    fn tail_node(&self) -> Option<Rc<N>>;
-}
-
-// Undirected edge
-pub trait EdgeLink<N: Node<V, Self, H>, V: 'static, H: HeadNodeCache<N, V, Self>>:
-    Edge<N, V, H>
-{
-    fn new_link(left: Rc<N>, right: Rc<N>, meta: Rc<H>) -> Rc<Self>;
-    fn left_node(&self) -> Option<Rc<N>>;
-    fn right_node(&self) -> Option<Rc<N>>;
-}
-
-// Looping Edge
-pub trait EdgeLoop<N: Node<V, Self, H>, V: 'static, H: Head>: Edge<N, V, H> {
-    fn new_loop(node: Rc<N>, meta: Rc<H>) -> Rc<Self>;
-    fn loop_node(&self) -> Option<Rc<N>>;
-}
-
-// Edge with a value
-pub trait EdgeWeighted<N: Node<V, Self, H>, V: 'static, H: Head, W: Default + 'static>:
-    Edge<N, V, H>
-{
+    // if node with node_id points inside this link toward another node, return node pointed to
+    fn try_node(&self, node_id: usize) -> Option<Rc<N>>;
+    // if node with node_id points inside this link toward a strong node, return strong node pointed to
+    fn try_strong_node(&self, node_id: usize) -> Option<Rc<N>>;
+    // if node with node_id points inside this link toward a weak node, return weak node pointed to
+    fn try_weak_node(&self, node_id: usize) -> Option<Rc<N>>;
     fn get_weight(&self) -> std::cell::Ref<'_, W>;
     fn get_weight_mut(&self) -> std::cell::RefMut<'_, W>;
 }
 
-pub trait Node<V: 'static, E: Edge<Self, V, H>, H: Head>: Sized + 'static {
-    fn new(value: V, meta: Rc<H>) -> Rc<Self>;
+pub trait Node<V: 'static, L: Link<Self, V, W>, W: Default + 'static>: Sized + 'static {
+    fn new(value: V) -> Rc<Self>;
     fn get_value(&self) -> std::cell::Ref<'_, V>;
     fn get_value_mut(&self) -> std::cell::RefMut<'_, V>;
     fn get_id(&self) -> usize;
     fn get_self(&self) -> Option<Rc<Self>>;
-    fn add_edge(&self, edge: Rc<E>) -> Rc<E>;
-    fn len_edges(&self) -> usize;
-    fn get_edge(&self, index: usize) -> Option<Rc<E>> {
-        self.iter_edges().nth(index)
+    fn add_link(&self, link: Rc<L>) -> Rc<L>;
+    fn len_links(&self) -> usize;
+    fn get_link(&self, index: usize) -> Option<Rc<L>> {
+        self.iter_links().nth(index)
     }
-    fn get_edge_by_id(&self, id: usize) -> Option<Rc<E>> {
-        self.iter_edges().find(|e| e.get_id() == id)
+    fn get_link_by_id(&self, id: usize) -> Option<Rc<L>> {
+        self.iter_links().find(|e| e.get_id() == id)
     }
-    fn iter_edges(&self) -> Box<dyn Iterator<Item = Rc<E>>> {
-        Box::new(IterEdges::<Self, V, E, H>::new(self.get_self().unwrap()))
+    fn iter_links(&self) -> Box<dyn Iterator<Item = Rc<L>>> {
+        Box::new(IterLinks::<Self, V, L, W>::new(self.get_self().unwrap()))
     }
-    fn iter_heads(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
+    fn iter_nodes(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
+        Box::new(self.iter_links().filter_map(|e| e.try_node(self.get_id())))
+    }
+    fn iter_strong_nodes(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
         Box::new(
-            self.iter_edges()
-                .filter_map(|e| e.try_head_node(self.get_id())),
+            self.iter_links()
+                .filter_map(|e| e.try_strong_node(self.get_id())),
         )
     }
-    fn iter_tails(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
+    fn iter_weak_nodes(&self) -> Box<dyn Iterator<Item = Rc<Self>> + '_> {
         Box::new(
-            self.iter_edges()
-                .filter_map(|e| e.try_tail_node(self.get_id())),
+            self.iter_links()
+                .filter_map(|e| e.try_weak_node(self.get_id())),
         )
     }
 }
